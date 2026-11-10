@@ -55,8 +55,8 @@
       position: absolute;
       top: 50%;
       left: 50%;
-      width: 1280px;
-      height: 750px;
+      width: 100%;
+      height: 100%;
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -843,7 +843,16 @@
     let isPortraitRotated = false;
     let currentStageScale = 1;
 
+    function isMobileOrTablet() {
+      const ua = navigator.userAgent || '';
+      const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini|Mobile|Tablet/i.test(ua);
+      const isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+      const isCoarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+      return isMobileUA || (isTouch && isCoarse);
+    }
+
     function tryLockLandscape() {
+      if (!isMobileOrTablet()) return;
       try {
         if (screen.orientation && screen.orientation.lock) {
           screen.orientation.lock('landscape').catch(() => {});
@@ -852,15 +861,26 @@
     }
 
     function updateStageLayout() {
+      // On PC / Desktop: keep original default 100% layout without rotation or scaling
+      if (!isMobileOrTablet()) {
+        isPortraitRotated = false;
+        currentStageScale = 1;
+        appStage.style.width = '100%';
+        appStage.style.height = '100%';
+        appStage.style.transform = 'translate(-50%, -50%)';
+        if (typeof resizeOptics === 'function') resizeOptics();
+        if (typeof resizeSoundCanvas === 'function') resizeSoundCanvas();
+        return;
+      }
+
+      // On Mobile Phone / Tablet (D-but): auto-rotate to landscape & scale desktop layout to fit
       const vw = window.visualViewport ? window.visualViewport.width : window.innerWidth;
       const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
 
-      // If screen is held vertically (portrait), automatically rotate stage 90deg into landscape
       isPortraitRotated = vh > vw;
       const landW = isPortraitRotated ? vh : vw;
       const landH = isPortraitRotated ? vw : vh;
 
-      // Base desktop resolution so the entire UI fits like a computer monitor
       const BASE_W = 1280;
       const BASE_H = 750;
       const scale = Math.min(1, landW / BASE_W, landH / BASE_H);
