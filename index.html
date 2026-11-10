@@ -2,7 +2,9 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
   <title>호쌤의 가상과학실험실</title>
   
   <!-- Fonts: Outfit & Noto Sans KR -->
@@ -34,17 +36,36 @@
 
     * { margin: 0; padding: 0; box-sizing: border-box; }
     
-    body {
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      position: fixed;
+      inset: 0;
       font-family: var(--font-main);
+      background-color: var(--bg-light);
+      color: var(--text-main);
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    /* AUTO-LANDSCAPE & DESKTOP-SCALED STAGE */
+    #app-stage {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 1280px;
+      height: 750px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      transform-origin: center center;
+      transform: translate(-50%, -50%);
       background-color: var(--bg-light);
       background-image: 
         radial-gradient(circle at 10% 20%, rgba(138, 180, 248, 0.15) 0%, transparent 40%),
         radial-gradient(circle at 90% 80%, rgba(255, 183, 178, 0.15) 0%, transparent 40%);
-      color: var(--text-main);
-      height: 100vh;
-      overflow: hidden;
-      display: flex;
-      flex-direction: column;
     }
 
     /* VIEW SWITCHING */
@@ -550,6 +571,7 @@
   </style>
 </head>
 <body>
+  <div id="app-stage">
 
   <!-- ==============================================
        HOME VIEW (MAIN LOBBY)
@@ -811,12 +833,67 @@
       </aside>
     </div>
   </div>
+  </div><!-- /#app-stage -->
 
   <script>
+    /* =========================================================
+       AUTO-LANDSCAPE & DESKTOP VIEWPORT SCALING ENGINE
+       ========================================================= */
+    const appStage = document.getElementById('app-stage');
+    let isPortraitRotated = false;
+    let currentStageScale = 1;
+
+    function tryLockLandscape() {
+      try {
+        if (screen.orientation && screen.orientation.lock) {
+          screen.orientation.lock('landscape').catch(() => {});
+        }
+      } catch (e) {}
+    }
+
+    function updateStageLayout() {
+      const vw = window.visualViewport ? window.visualViewport.width : window.innerWidth;
+      const vh = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+
+      // If screen is held vertically (portrait), automatically rotate stage 90deg into landscape
+      isPortraitRotated = vh > vw;
+      const landW = isPortraitRotated ? vh : vw;
+      const landH = isPortraitRotated ? vw : vh;
+
+      // Base desktop resolution so the entire UI fits like a computer monitor
+      const BASE_W = 1280;
+      const BASE_H = 750;
+      const scale = Math.min(1, landW / BASE_W, landH / BASE_H);
+      currentStageScale = scale;
+
+      const stageW = Math.round(landW / scale);
+      const stageH = Math.round(landH / scale);
+
+      appStage.style.width = stageW + 'px';
+      appStage.style.height = stageH + 'px';
+
+      if (isPortraitRotated) {
+        appStage.style.transform = `translate(-50%, -50%) rotate(90deg) scale(${scale})`;
+      } else {
+        appStage.style.transform = `translate(-50%, -50%) scale(${scale})`;
+      }
+
+      if (typeof resizeOptics === 'function') resizeOptics();
+      if (typeof resizeSoundCanvas === 'function') resizeSoundCanvas();
+    }
+
+    window.addEventListener('resize', updateStageLayout);
+    window.addEventListener('orientationchange', () => setTimeout(updateStageLayout, 80));
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', updateStageLayout);
+    }
+
     /* =========================================================
        VIEW ROUTING
        ========================================================= */
     function switchView(viewId) {
+      tryLockLandscape();
+
       // Stop sound automatically if leaving the sound lab view
       if (viewId !== 'sound-lab-view' && isSoundPlaying) {
         stopSound();
@@ -825,13 +902,19 @@
       document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
       document.getElementById(viewId).classList.add('active');
 
+      updateStageLayout();
+
       if (viewId === 'lab-view') {
-        setTimeout(resizeOptics, 50);
+        setTimeout(() => {
+          updateStageLayout();
+          resizeOptics();
+        }, 40);
       } else if (viewId === 'sound-lab-view') {
         setTimeout(() => {
+          updateStageLayout();
           resizeSoundCanvas();
           startSoundAnimationLoop();
-        }, 50);
+        }, 40);
       }
     }
 
@@ -913,20 +996,37 @@
       render();
     };
 
-    // Mouse & Touch Events for Dragging Object
+    // Mouse & Touch Events for Dragging Object (Supports Auto-Landscape Rotation & Scaling)
     function getMousePos(e) {
       const rect = canvas.getBoundingClientRect();
-      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-      return {
-        x: clientX - rect.left - centerX,
-        y: clientY - rect.top - centerY
-      };
+      const touch = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]);
+      const clientX = touch ? touch.clientX : e.clientX;
+      const clientY = touch ? touch.clientY : e.clientY;
+
+      if (isPortraitRotated) {
+        const localX = ((clientY - rect.top) / rect.height) * width;
+        const localY = ((rect.right - clientX) / rect.width) * height;
+        return {
+          x: localX - centerX,
+          y: localY - centerY
+        };
+      } else {
+        const localX = ((clientX - rect.left) / rect.width) * width;
+        const localY = ((clientY - rect.top) / rect.height) * height;
+        return {
+          x: localX - centerX,
+          y: localY - centerY
+        };
+      }
+    }
+
+    function isNearObjectArrow(pos) {
+      return Math.abs(pos.x - obj.x) < 48 && pos.y < 20 && pos.y > -obj.height - 35;
     }
 
     canvas.addEventListener('mousedown', (e) => {
       const pos = getMousePos(e);
-      if (Math.abs(pos.x - obj.x) < 35 && pos.y < 10 && pos.y > -obj.height - 25) {
+      if (isNearObjectArrow(pos)) {
         obj.isDragging = true;
         canvas.style.cursor = 'grabbing';
       }
@@ -940,7 +1040,7 @@
         render();
       } else {
         const pos = getMousePos(e);
-        if (Math.abs(pos.x - obj.x) < 35 && pos.y < 10 && pos.y > -obj.height - 25) {
+        if (isNearObjectArrow(pos)) {
           canvas.style.cursor = 'grab';
         } else {
           canvas.style.cursor = 'crosshair';
@@ -953,6 +1053,63 @@
         obj.isDragging = false;
         canvas.style.cursor = 'crosshair';
       }
+    });
+
+    // Mobile & Tablet (D-but) Touch Support for Dragging Object
+    canvas.addEventListener('touchstart', (e) => {
+      const pos = getMousePos(e);
+      if (isNearObjectArrow(pos)) {
+        obj.isDragging = true;
+        if (e.cancelable) e.preventDefault();
+      }
+    }, { passive: false });
+
+    window.addEventListener('touchmove', (e) => {
+      if (!obj.isDragging) return;
+      if (e.cancelable) e.preventDefault();
+      const pos = getMousePos(e);
+      obj.x = Math.max(-centerX + 40, Math.min(-30, pos.x));
+      render();
+    }, { passive: false });
+
+    window.addEventListener('touchend', () => {
+      if (obj.isDragging) {
+        obj.isDragging = false;
+      }
+    });
+
+    // Support smooth slider dragging when auto-rotated 90deg on portrait phones
+    document.querySelectorAll('input[type=range]').forEach((slider) => {
+      let draggingSlider = false;
+      function updateSliderFromPoint(e) {
+        if (!isPortraitRotated) return;
+        const touch = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]);
+        const clientY = touch ? touch.clientY : e.clientY;
+        const rect = slider.getBoundingClientRect();
+        if (!rect.height) return;
+        const ratio = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+        const min = parseFloat(slider.min) || 0;
+        const max = parseFloat(slider.max) || 100;
+        const step = parseFloat(slider.step) || 1;
+        let val = min + ratio * (max - min);
+        val = Math.round((val - min) / step) * step + min;
+        slider.value = val;
+        slider.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      slider.addEventListener('touchstart', (e) => {
+        if (!isPortraitRotated) return;
+        draggingSlider = true;
+        if (e.cancelable) e.preventDefault();
+        updateSliderFromPoint(e);
+      }, { passive: false });
+      slider.addEventListener('touchmove', (e) => {
+        if (!isPortraitRotated || !draggingSlider) return;
+        if (e.cancelable) e.preventDefault();
+        updateSliderFromPoint(e);
+      }, { passive: false });
+      slider.addEventListener('touchend', () => {
+        draggingSlider = false;
+      });
     });
 
     // Physics Calculation for Both Lenses and Mirrors
@@ -1773,6 +1930,9 @@
       }
       soundAnimId = requestAnimationFrame(step);
     }
+
+    // Initialize responsive desktop stage on startup
+    updateStageLayout();
   </script>
 </body>
 </html>
